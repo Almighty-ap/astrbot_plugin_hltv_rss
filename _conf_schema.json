@@ -1,0 +1,58 @@
+{
+  "enable": {
+    "description": "启用定时轮询推送",
+    "type": "bool",
+    "default": true,
+    "hint": "关闭后不会自动轮询,但仍可使用 /hltv now 手动检查、/hltv latest 手动拉取"
+  },
+  "interval_minutes": {
+    "description": "轮询间隔(分钟)",
+    "type": "int",
+    "default": 15,
+    "hint": "HLTV RSS 官方 ttl 为 60 分钟,建议 10~30 分钟,不要设置过小以免被限流"
+  },
+  "rss_url": {
+    "description": "HLTV RSS 地址",
+    "type": "string",
+    "default": "https://www.hltv.org/rss/news",
+    "hint": "一般不需要修改"
+  },
+  "provider_id": {
+    "description": "用于翻译总结的 LLM 提供商",
+    "type": "string",
+    "default": "",
+    "hint": "留空时自动使用订阅会话当前配置的模型,或任意可用的聊天模型",
+    "_special": "select_provider"
+  },
+  "include_image": {
+    "description": "推送时附带新闻封面图",
+    "type": "bool",
+    "default": true,
+    "hint": "封面图由插件用 Chrome 指纹 + 代理下载后以 base64 发送,不依赖 NapCat 网络;下载失败自动退化为纯文本"
+  },
+  "include_link": {
+    "description": "推送文本中包含 HLTV 原文链接",
+    "type": "bool",
+    "default": true,
+    "hint": "QQ 可能屏蔽 hltv.org 链接导致整条消息被拦截,遇到时可关闭"
+  },
+  "message_mode": {
+    "description": "推送消息形式",
+    "type": "string",
+    "default": "image_text",
+    "options": ["image_text", "forward"],
+    "hint": "image_text=图文直发;forward=合并转发(整条消息折叠展示,可一定程度规避链接屏蔽)"
+  },
+  "use_proxy": {
+    "description": "抓取 HLTV(RSS 与封面图)时使用代理",
+    "type": "bool",
+    "default": false,
+    "hint": "服务器无法直连 hltv.org(报 403)时开启,并在下方填写代理地址;未开启时若容器设置了 HTTP_PROXY/HTTPS_PROXY 环境变量也会自动使用"
+  },
+  "proxy_url": {
+    "description": "代理地址",
+    "type": "string",
+    "default": "",
+    "hint": "仅在代理开关开启时生效,示例:http://127.0.0.1:7890"
+  }
+}
