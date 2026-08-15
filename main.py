@@ -23,6 +23,7 @@ import astrbot.api.message_components as Comp
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star
+from astrbot.core.message.message_event_result import MessageChain
 
 # ---------------------------------------------------------------------------
 # 常量
@@ -379,8 +380,13 @@ class HltvRssPlugin(Star):
         item: NewsItem,
         llm_text: str,
         image_bytes: Optional[bytes] = None,
-    ) -> Tuple[list, list]:
-        """返回 (完整消息链, 纯文本消息链)。"""
+    ) -> Tuple[MessageChain, MessageChain]:
+        """返回 (完整消息链, 纯文本消息链)。
+
+        包装成 MessageChain 对象:context.send_message 主动发送时只接受
+        MessageChain(带 .chain 属性),直接传 list 会报
+        "'list' object has no attribute 'chain'"。
+        """
         zh_title, summary = self._parse_llm_output(llm_text)
 
         lines = [f"📰 HLTV 资讯速递 · {self._category(item)}", ""]
@@ -396,7 +402,7 @@ class HltvRssPlugin(Star):
         lines.append(f"🕐 {self._format_time(item.pub_time)}")
         text = "\n".join(lines)
 
-        text_only_chain = [Comp.Plain(text)]
+        text_only_chain = MessageChain(chain=[Comp.Plain(text)])
         mode = str(self.config.get("message_mode") or "image_text").strip()
         if mode == "forward":
             # 合并转发模式:封面图与正文作为节点放进一条转发消息
@@ -411,9 +417,11 @@ class HltvRssPlugin(Star):
             nodes.append(
                 Comp.Node(content=[Comp.Plain(text)], name="HLTV 资讯速递")
             )
-            chain = [Comp.Nodes(nodes=nodes)]
+            chain = MessageChain(chain=[Comp.Nodes(nodes=nodes)])
         elif image_bytes:
-            chain = [Comp.Image.fromBytes(image_bytes), Comp.Plain(text)]
+            chain = MessageChain(
+                chain=[Comp.Image.fromBytes(image_bytes), Comp.Plain(text)]
+            )
         else:
             chain = text_only_chain
         return chain, text_only_chain
@@ -543,7 +551,7 @@ class HltvRssPlugin(Star):
                 logger.warning("[HLTV RSS] LLM 翻译失败(%s):%s", item.title, e)
             image_bytes = await self._prepare_image(item)
             chain, _ = self._build_chains(item, llm_text, image_bytes)
-            yield event.chain_result(chain)
+            yield event.chain_result(chain.chain)
 
         else:
             yield event.plain_result(HELP_TEXT)
