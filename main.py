@@ -34,6 +34,12 @@ CST = timezone(timedelta(hours=8))  # 北京时间
 MAX_SEEN = 500  # 最多记住多少条历史 guid 用于去重
 MEDIA_NS = "{http://search.yahoo.com/mrss/}"
 
+# Cloudflare 会按 TLS/JA3 指纹拦截,而不同出口 IP(代理节点)能被接受的指纹不一样:
+# 实测同一节点下 curl 200、curl_cffi 的 chrome 指纹 403。这里按顺序逐个尝试,
+# 命中后记住,后续优先复用。
+IMPERSONATE_CANDIDATES = ["firefox", "edge", "chrome_android", "chrome"]
+PLUGIN_VERSION = "1.4.0"
+
 # 命中规则 -> 推送消息中的分类标签
 CATEGORY_RULES = [
     (r"\b(bench(?:es|ed)?|demot(?:e|es|ed)|stand-?ins?)\b", "🪑 下放/替补"),
@@ -155,7 +161,13 @@ class HltvRssPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
+        self._working_impersonate: Optional[str] = None
         self._poll_task = asyncio.create_task(self._poll_loop())
+        logger.info(
+            "[HLTV RSS] 插件版本 v%s,指纹回退链 %s",
+            PLUGIN_VERSION,
+            " -> ".join(IMPERSONATE_CANDIDATES),
+        )
         logger.info(
             "[HLTV RSS] 插件已启动,轮询间隔 %s 分钟", self._interval_minutes()
         )
@@ -196,8 +208,11 @@ class HltvRssPlugin(Star):
         text = str(error)
         if "403" in text or "407" in text:
             return (
-                "\n(403/407:直连被 HLTV/Cloudflare 拒绝。请在插件设置中开启 use_proxy "
-                "并填写 proxy_url;或为容器设置 HTTP_PROXY/HTTPS_PROXY 环境变量,插件会自动使用)"
+                "\n(403/407:所有浏览器指纹都被 Cloudflare 拒绝。请确认已开启 use_proxy "
+                "并填写可用的 proxy_url(或为容器设置 HTTP_PROXY/HTTPS_PROXY);"
+                "插件会按 firefox -> edge -> chrome_android -> chrome 自动重试,"
+                "也可在插件设置里手动指定 impersonate;若仍失败,说明当前代理出口 IP "
+                "被 Cloudflare 标记,换个节点/线路)"
             )
         return ""
 
@@ -295,32 +310,68 @@ class HltvRssPlugin(Star):
 
     # ------------------------- RSS / LLM -------------------------
 
+    def _impersonate_candidates(self) -> List[str]:
+        """指纹候选:已探明可用的排最前,失败后回到完整回退链。"""
+        configured = str(self.config.get("impersonate") or "auto").strip().lower()
+        if configured and configured != "auto":
+            return [configured]
+        if self._working_impersonate:
+            return [self._working_impersonate] + [
+                p for p in IMPERSONATE_CANDIDATES if p != self._working_impersonate
+            ]
+        return list(IMPERSONATE_CANDIDATES)
+
+    async def _request_with_fallback(self, url: str, headers: Optional[dict] = None):
+        """按指纹回退链请求 url,返回成功(HTTP < 400)的响应。
+
+        Cloudflare 按 TLS/JA3 指纹拦截时,同一个出口 IP 下 curl 能过、
+        curl_cffi 的 chrome 指纹也可能被 403,所以逐个指纹试,谁先成功就记住谁。
+        """
+        proxy = self._proxy_url()
+        candidates = self._impersonate_candidates()
+        last_error: Optional[Exception] = None
+        for index, profile in enumerate(candidates):
+            try:
+                async with AsyncSession(
+                    impersonate=profile, proxy=proxy, timeout=30
+                ) as session:
+                    resp = await session.get(url, headers=headers)
+                if resp.status_code >= 400:
+                    last_error = RuntimeError(
+                        "HTTP %s(指纹 %s)" % (resp.status_code, profile)
+                    )
+                    logger.info(
+                        "[HLTV RSS] 指纹 %s 被拒(HTTP %s)%s",
+                        profile,
+                        resp.status_code,
+                        ",继续尝试下一个指纹"
+                        if index + 1 < len(candidates)
+                        else "",
+                    )
+                    continue
+                if self._working_impersonate != profile:
+                    self._working_impersonate = profile
+                    logger.info("[HLTV RSS] 使用指纹 %s 抓取成功", profile)
+                return resp
+            except Exception as e:
+                last_error = e
+                logger.info("[HLTV RSS] 指纹 %s 请求异常:%s", profile, e)
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("没有可用的抓取指纹")
+
     async def _fetch_rss(self) -> str:
         headers = {
             "Accept": "application/rss+xml, application/xml;q=0.9, */*;q=0.8",
         }
-        proxy = self._proxy_url()
-        if proxy:
-            logger.debug("[HLTV RSS] 使用代理抓取:%s", proxy)
-        # Cloudflare 会检测 TLS 指纹(JA3),Python aiohttp 的指纹会被直接 403,
-        # 因此改用 curl_cffi 伪装 Chrome 指纹抓取
-        async with AsyncSession(
-            impersonate="chrome", proxy=proxy, timeout=30
-        ) as session:
-            resp = await session.get(self._rss_url(), headers=headers)
-            resp.raise_for_status()
-            return resp.text
+        resp = await self._request_with_fallback(self._rss_url(), headers)
+        return resp.text
 
     async def _download_image(self, url: str) -> Optional[bytes]:
-        """封面图同样经过 Cloudflare CDN,用 Chrome 指纹 + 插件代理在插件内下载。"""
-        proxy = self._proxy_url()
+        """封面图同样经过 Cloudflare CDN,复用同一套指纹与代理在插件内下载。"""
         try:
-            async with AsyncSession(
-                impersonate="chrome", proxy=proxy, timeout=30
-            ) as session:
-                resp = await session.get(url)
-                resp.raise_for_status()
-                return resp.content
+            resp = await self._request_with_fallback(url)
+            return resp.content
         except Exception as e:
             logger.warning("[HLTV RSS] 封面图下载失败(%s):%s", url, e)
             return None

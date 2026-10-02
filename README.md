@@ -9,6 +9,7 @@ HLTV RSS 订阅推送插件(AstrBot + NapCat / OneBot v11)。
 - 使用 AstrBot 已配置的 LLM 把标题和摘要翻译成中文并总结
 - 每条新闻只调用一次 LLM,多个订阅会话共用同一翻译结果,不会重复消耗
 - 按 `封面图 + 中文标题(附原标题) + AI 总结 + 链接 + 北京时间` 的排版推送
+- 遇到 Cloudflare 403 时自动切换浏览器指纹(TLS/JA3)重试,并把成功过的指纹记住
 - guid 去重:每条新闻只推送一次;首次安装只记录历史、不刷屏
 
 ## 安装
@@ -45,6 +46,7 @@ HLTV RSS 订阅推送插件(AstrBot + NapCat / OneBot v11)。
 | `message_mode` | image_text | `image_text` 图文直发 / `forward` 合并转发 |
 | `use_proxy` | false | 抓取 HLTV(RSS 与封面图)时是否使用代理 |
 | `proxy_url` | 空 | 代理地址,如 `http://127.0.0.1:7890`,仅代理开关开启时生效 |
+| `impersonate` | auto | 抓取用的浏览器指纹,`auto` 会按 firefox→edge→chrome_android→chrome 自动重试并记住可用值 |
 
 ### 关于代理
 
@@ -53,6 +55,7 @@ HLTV RSS 订阅推送插件(AstrBot + NapCat / OneBot v11)。
   1. 打开 `use_proxy` 并填写 `proxy_url`;
   2. 或者给容器设置 `HTTP_PROXY` / `HTTPS_PROXY` 环境变量,插件会自动沿用(与 curl 行为一致)。
 - 显式填写的 `proxy_url` 优先于环境变量。
+- 同一出口 IP 下不同指纹的放行情况不同:实测 `chrome`/`safari` 可能被 403,而 `firefox`/`edge`/`chrome_android` 可正常返回 200
 - Docker 内 `127.0.0.1` 指向容器自身,若代理在宿主机上,请填写宿主机 IP(如 `http://172.17.0.1:7890`)或代理容器名。
 
 ## 说明
@@ -63,3 +66,11 @@ HLTV RSS 订阅推送插件(AstrBot + NapCat / OneBot v11)。
 - 拉取报 403 时,指令回复会附带代理配置提示
 - QQ 可能屏蔽 hltv.org 链接:可关闭 `include_link`,或把 `message_mode` 切为 `forward` 合并转发
 - 全量推送:RSS 中每条新资讯都会触发一次 LLM 翻译总结(无论订阅了多少个会话,每条新闻只翻译一次),请关注 LLM 用量与费用
+
+
+## 排障:仍然 403
+
+1. 先确认代理通:在容器里执行 `curl -x http://<代理地址> -o /dev/null -w '%{http_code}' https://www.hltv.org/rss/news`,应返回 200
+2. 若 curl 通、插件仍 403,就是 TLS 指纹被拦:插件会自动按 firefox → edge → chrome_android → chrome 重试,也可手动指定 `impersonate`
+3. 若所有指纹都 403,通常是当前代理出口 IP 被 Cloudflare 标记,换个节点/线路即可
+4. 插件启动日志会打印指纹回退链,首次抓取成功后会打印 `使用指纹 xxx 抓取成功`,可据此确认当前生效指纹

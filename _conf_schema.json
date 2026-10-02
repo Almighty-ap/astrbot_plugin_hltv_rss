@@ -49,6 +49,13 @@
     "default": false,
     "hint": "服务器无法直连 hltv.org(报 403)时开启,并在下方填写代理地址;未开启时若容器设置了 HTTP_PROXY/HTTPS_PROXY 环境变量也会自动使用"
   },
+  "impersonate": {
+    "description": "抓取时使用的浏览器指纹",
+    "type": "string",
+    "default": "auto",
+    "options": ["auto", "firefox", "edge", "chrome_android", "chrome", "safari", "safari_ios", "tor"],
+    "hint": "auto=按 firefox -> edge -> chrome_android -> chrome 顺序自动尝试,命中后记住。若报 403 说明当前指纹被 Cloudflare 拦了,可手动指定其它值"
+  },
   "proxy_url": {
     "description": "代理地址",
     "type": "string",
