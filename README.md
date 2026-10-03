@@ -1,5 +1,9 @@
 # astrbot_plugin_hltv_rss
 
+> [!IMPORTANT]
+> **本仓库已停止更新**,插件内容已整合进 [astrbot_plugin_cs2_results](https://github.com/Almighty-ap/astrbot_plugin_cs2_results)。
+> 后续的修复与新功能都在新仓库维护,请前往新仓库获取最新版本;本仓库仅保留为历史存档,不再提交更新。
+
 HLTV RSS 订阅推送插件(AstrBot + NapCat / OneBot v11)。
 
 ## 功能
